@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>萬用線上報名系統</title>
+  
+  <!-- 載入 Tailwind CSS 樣式引擎 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 設定現代模組解析 (Import Maps) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+        "firebase/app": "https://esm.sh/firebase@10.8.0/app",
+        "firebase/auth": "https://esm.sh/firebase@10.8.0/auth",
+        "firebase/firestore": "https://esm.sh/firebase@10.8.0/firestore"
+      }
+    }
+  </script>
+  
+  <!-- 載入 Babel 即時編譯器 (讓瀏覽器看懂 React JSX) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* 確保淡入動畫正常運作 */
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .animate-fade-in { animation: fadeIn 0.3s ease-in-out; }
+  </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800 pb-10">
+  
+  <div id="root"></div>
+
+  <!-- 主程式邏輯區塊 -->
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Settings, Users, Edit, Trash2, Plus, ArrowLeft, Check, X, LogIn, Lock, FileText, AlertCircle, Clock } from 'lucide-react';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+    import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+
+    // ==========================================
+    // ⚠️ 請在這裡替換成您專屬的 Firebase 設定！ ⚠️
+    // ==========================================
+   // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyD7CkhiUFfv44GB_4K3_CtGhedlr7ZfE7I",
+  authDomain: "post-d1a06.firebaseapp.com",
+  projectId: "post-d1a06",
+  storageBucket: "post-d1a06.firebasestorage.app",
+  messagingSenderId: "806076052846",
+  appId: "1:806076052846:web:df9afefb7ee7efbef27d7f",
+  measurementId: "G-H4XJ9F8Z15"
+};
+
+    // 初始化 Firebase (若未填寫正確設定，將在記憶體模式下預覽)
+    let app, auth, db;
+    try {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } catch(e) {
+        console.warn("Firebase 未設定或設定錯誤，預覽功能受限。請記得填寫上方設定。");
+    }
+    
+    // 自訂專案資料夾 ID
+    const sysAppId = 'my-custom-form-system';
+
+    // 系統主元件
+    function App() {
+      // --- 狀態管理 ---
+      const [currentView, setCurrentView] = useState('user_home');
+      const [toast, setToast] = useState(null);
+      const [user, setUser] = useState(null);
+      const [successModal, setSuccessModal] = useState(null);
+      const [confirmModal, setConfirmModal] = useState(null);
+
+      const [adminPassword, setAdminPassword] = useState('admin888');
+      const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+      const [forms, setForms] = useState([]);
+      const [editingForm, setEditingForm] = useState(null);
+      const [viewingFormId, setViewingFormId] = useState(null);
+
+      const [selectedForm, setSelectedForm] = useState(null);
+      const [registrations, setRegistrations] = useState([]);
+      const [editingRegistration, setEditingRegistration] = useState(null);
+
+      const showToast = (message, type = 'info') => {
+        setToast({ message, type });
+        setTimeout(() => setToast(null), 3000);
+      };
+      const generateId = () => Math.random().toString(36).substr(2, 9);
+      const navigateTo = (view) => { setCurrentView(view); window.scrollTo(0, 0); };
+
+      // --- Firebase 資料同步 ---
+      useEffect(() => {
+        if (!auth || !db) return;
+        const initAuth = async () => {
+          try { await signInAnonymously(auth); } catch (e) { console.error(e); }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+      }, []);
+
+      useEffect(() => {
+        if (!user || !db) return;
+        const formsRef = collection(db, 'artifacts', sysAppId, 'public', 'data', 'forms');
+        const unsubForms = onSnapshot(formsRef, (snapshot) => {
+          setForms(snapshot.docs.map(doc => doc.data()));
+        });
+        const regsRef = collection(db, 'artifacts', sysAppId, 'public', 'data', 'registrations');
+        const unsubRegs = onSnapshot(regsRef, (snapshot) => {
+          setRegistrations(snapshot.docs.map(doc => doc.data()));
+        });
+        return () => { unsubForms(); unsubRegs(); };
+      }, [user]);
+
+      // --- 管理員邏輯 ---
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        if (e.target.password.value === adminPassword) {
+          setIsAdminLoggedIn(true); navigateTo('admin_dashboard'); showToast('登入成功', 'success');
+        } else {
+          showToast('密碼錯誤', 'error');
+        }
+      };
+
+      const handleSaveForm = async () => {
+        if (!editingForm.title || !editingForm.startTime || !editingForm.endTime) return showToast('請填寫完整基本資料', 'error');
+        if (editingForm.questions.find(q => !q.text.trim())) return showToast('所有題目必須填寫內容', 'error');
+        
+        try {
+          if(db) await setDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'forms', editingForm.id), editingForm);
+          else setForms([...forms.filter(f => f.id !== editingForm.id), editingForm]); // 記憶體 fallback
+          showToast('表單已儲存！', 'success');
+          navigateTo('admin_dashboard');
+        } catch (err) { showToast('儲存失敗', 'error'); }
+      };
+
+      const handleDeleteForm = (formId) => {
+        setConfirmModal({
+          title: '刪除表單',
+          message: '確定要刪除嗎？關聯報名資料將一併刪除無法復原。',
+          onConfirm: async () => {
+            try {
+              if(db) {
+                await deleteDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'forms', formId));
+                const relatedRegs = registrations.filter(r => r.formId === formId);
+                for (const reg of relatedRegs) await deleteDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'registrations', reg.id));
+              } else {
+                setForms(forms.filter(f => f.id !== formId));
+              }
+              showToast('表單已刪除', 'success');
+              setConfirmModal(null);
+            } catch (err) { showToast('刪除失敗', 'error'); }
+          }
+        });
+      };
+
+      // --- 使用者邏輯 ---
+      const checkFormStatus = (form) => {
+        const now = new Date(), start = new Date(form.startTime), end = new Date(form.endTime);
+        const currentCount = registrations.filter(r => r.formId === form.id).length;
+        if (now < start) return { status: 'not_started', text: '尚未開放', canApply: false };
+        if (now > end) return { status: 'ended', text: '已截止', canApply: false };
+        if (currentCount >= form.maxParticipants) return { status: 'full', text: '已額滿', canApply: false };
+        return { status: 'open', text: '開放報名中', canApply: true };
+      };
+
+      const handleSubmitRegistration = (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const answers = {}; let hasError = false;
+        selectedForm.questions.forEach(q => {
+          if (q.type === 'multiple') {
+            const values = formData.getAll(q.id); answers[q.id] = values; if (!values.length) hasError = true;
+          } else {
+            const val = formData.get(q.id); answers[q.id] = val; if (!val?.trim()) hasError = true;
+          }
+        });
+
+        const editPwd = formData.get('editPassword');
+        if (!editPwd || editPwd.trim().length < 4) return showToast('密碼至少4碼', 'error');
+        if (hasError) return showToast('請填寫所有題目', 'error');
+
+        const newRegId = generateId().toUpperCase();
+        const newReg = { id: newRegId, formId: selectedForm.id, answers, editPassword: editPwd, submittedAt: new Date().toISOString() };
+
+        if(db) {
+            setDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'registrations', newRegId), newReg)
+              .then(() => setSuccessModal({ title: '報名成功！', message: '請妥善保存下方序號與自訂密碼。', regId: newRegId }))
+              .catch(() => showToast('報名失敗', 'error'));
+        } else {
+            setRegistrations([...registrations, newReg]);
+            setSuccessModal({ title: '報名成功！', message: '請妥善保存下方序號與自訂密碼。', regId: newRegId });
+        }
+      };
+
+      // UI 元件簡化渲染...
+      return (
+        <div>
+          {/* 導覽列 */}
+          <nav className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
+            <div className="max-w-5xl mx-auto px-4 flex justify-between h-16 items-center">
+              <div className="flex items-center space-x-2 font-bold text-xl cursor-pointer" onClick={() => navigateTo('user_home')}>
+                <FileText className="text-blue-400"/> <span>萬用報名系統</span>
+              </div>
+              <button onClick={() => isAdminLoggedIn ? navigateTo('admin_dashboard') : navigateTo('admin_login')} className="px-4 py-2 hover:bg-slate-800 rounded-md flex items-center space-x-1">
+                <Settings size={16}/> <span>後台管理</span>
+              </button>
+            </div>
+          </nav>
+
+          {/* 提示訊息 */}
+          {toast && (
+            <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full text-white shadow-xl z-50 flex items-center space-x-2 ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-600'}`}>
+              <span>{toast.message}</span>
+            </div>
+          )}
+
+          {/* 成功 Modal */}
+          {successModal && (
+             <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+               <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-xl">
+                 <h3 className="text-2xl font-bold mb-4">{successModal.title}</h3>
+                 <div className="bg-blue-50 p-4 rounded-xl mb-6">
+                   <p className="text-3xl font-mono text-blue-600 font-bold select-all">{successModal.regId}</p>
+                 </div>
+                 <button onClick={() => { setSuccessModal(null); navigateTo('user_home'); }} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold">確認返回</button>
+               </div>
+             </div>
+          )}
+
+          {/* 確認 Modal */}
+          {confirmModal && (
+             <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+               <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-xl border-t-8 border-red-500">
+                 <h3 className="text-xl font-bold text-red-600 mb-4">{confirmModal.title}</h3>
+                 <p className="mb-6">{confirmModal.message}</p>
+                 <div className="flex gap-4">
+                   <button onClick={() => setConfirmModal(null)} className="flex-1 bg-gray-100 py-2 rounded-xl">取消</button>
+                   <button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 text-white py-2 rounded-xl">確定執行</button>
+                 </div>
+               </div>
+             </div>
+          )}
+
+          {/* 主要內容區 */}
+          <main className="max-w-4xl mx-auto mt-8 px-4 animate-fade-in">
+            {currentView === 'user_home' && (
+              <div className="space-y-6">
+                <div className="bg-blue-600 rounded-3xl p-8 text-white shadow-lg flex justify-between items-center">
+                  <h1 className="text-3xl font-bold">開放中的活動</h1>
+                </div>
+                {forms.map(form => {
+                  const status = checkFormStatus(form);
+                  return (
+                    <div key={form.id} className="bg-white p-6 rounded-2xl shadow-sm border mb-4">
+                      <h3 className="text-xl font-bold">{form.title} <span className="text-sm text-blue-600 bg-blue-50 px-2 py-1 rounded-full ml-2">{status.text}</span></h3>
+                      <button onClick={() => { setSelectedForm(form); navigateTo('user_form'); }} disabled={!status.canApply} className={`mt-4 w-full py-3 rounded-xl font-bold ${status.canApply ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>前往報名</button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {currentView === 'user_form' && selectedForm && (
+              <div className="bg-white p-8 rounded-2xl shadow border">
+                <h2 className="text-2xl font-bold mb-6 border-b pb-4">{selectedForm.title} - 填寫報名</h2>
+                <form onSubmit={handleSubmitRegistration} className="space-y-6">
+                  {selectedForm.questions.map((q, idx) => (
+                    <div key={q.id}>
+                      <label className="block font-bold mb-2">{idx + 1}. {q.text}</label>
+                      {q.type === 'short' && <input type="text" name={q.id} required className="w-full border p-2 rounded" />}
+                      {q.type !== 'short' && q.options.map(opt => (
+                        <label key={opt} className="block mt-2"><input type={q.type === 'single' ? 'radio' : 'checkbox'} name={q.id} value={opt} className="mr-2"/>{opt}</label>
+                      ))}
+                    </div>
+                  ))}
+                  <hr/>
+                  <div>
+                    <label className="block font-bold text-blue-700">設定您的編修密碼 (日後修改用)</label>
+                    <input type="password" name="editPassword" required minLength="4" className="w-full border border-blue-300 p-2 rounded mt-2" />
+                  </div>
+                  <button className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">送出報名</button>
+                </form>
+              </div>
+            )}
+
+            {currentView === 'admin_login' && (
+              <form onSubmit={handleAdminLogin} className="bg-white p-8 rounded-2xl shadow max-w-sm mx-auto mt-20">
+                <h2 className="text-xl font-bold text-center mb-6">後台登入</h2>
+                <input type="password" name="password" placeholder="輸入密碼 (預設 admin888)" className="w-full border p-3 rounded mb-4"/>
+                <button className="w-full bg-purple-600 text-white font-bold py-3 rounded">登入</button>
+              </form>
+            )}
+
+            {currentView === 'admin_dashboard' && (
+              <div>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-bold">表單管理</h2>
+                  <button onClick={() => { setEditingForm({id: generateId(), title: '', startTime: '', endTime: '', maxParticipants: 50, questions: []}); navigateTo('admin_form_editor'); }} className="bg-purple-600 text-white px-4 py-2 rounded font-bold">+ 新增表單</button>
+                </div>
+                {forms.map(form => (
+                  <div key={form.id} className="bg-white p-4 rounded-xl shadow mb-4 flex justify-between items-center">
+                    <span className="font-bold text-lg">{form.title}</span>
+                    <button onClick={() => handleDeleteForm(form.id)} className="text-red-500 bg-red-50 px-3 py-1 rounded font-bold">刪除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {currentView === 'admin_form_editor' && (
+              <div className="bg-white p-8 rounded-2xl shadow">
+                 <h2 className="text-xl font-bold mb-4">編輯表單</h2>
+                 <input type="text" placeholder="表單標題" value={editingForm.title} onChange={e => setEditingForm({...editingForm, title: e.target.value})} className="w-full border p-3 rounded mb-4 text-lg font-bold" />
+                 <div className="flex gap-4 mb-4">
+                   <input type="datetime-local" value={editingForm.startTime} onChange={e => setEditingForm({...editingForm, startTime: e.target.value})} className="border p-2 rounded w-full"/>
+                   <input type="datetime-local" value={editingForm.endTime} onChange={e => setEditingForm({...editingForm, endTime: e.target.value})} className="border p-2 rounded w-full"/>
+                 </div>
+                 <button onClick={() => setEditingForm({...editingForm, questions: [...editingForm.questions, {id: generateId(), type: 'short', text: '新簡答題'}]})} className="bg-purple-100 text-purple-700 px-4 py-2 rounded font-bold w-full mb-6">+ 新增一題簡答題</button>
+                 <button onClick={handleSaveForm} className="w-full bg-purple-600 text-white font-bold py-3 rounded-xl">儲存表單並發布</button>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
