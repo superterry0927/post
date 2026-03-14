@@ -48,7 +48,7 @@
     // ==========================================
     // ⚠️ 請在這裡替換成您專屬的 Firebase 設定！ ⚠️
     // ==========================================
-   // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyD7CkhiUFfv44GB_4K3_CtGhedlr7ZfE7I",
   authDomain: "post-d1a06.firebaseapp.com",
@@ -137,6 +137,18 @@ const firebaseConfig = {
         } else {
           showToast('密碼錯誤', 'error');
         }
+      };
+
+      const handleChangeAdminPassword = (e) => {
+        e.preventDefault();
+        const newPwd = e.target.newPassword.value;
+        if (newPwd.trim().length < 4) {
+          showToast('密碼長度至少需 4 個字元', 'error');
+          return;
+        }
+        setAdminPassword(newPwd);
+        showToast('管理員密碼修改成功！', 'success');
+        e.target.reset();
       };
 
       const handleSaveForm = async () => {
@@ -352,6 +364,20 @@ const firebaseConfig = {
                     <button onClick={() => handleDeleteForm(form.id)} className="w-full md:w-auto text-red-600 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><Trash2 size={16} className="mr-1"/> 刪除表單</button>
                   </div>
                 ))}
+
+                {/* 修改管理員密碼區塊 */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border mt-6">
+                  <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">系統設定</h2>
+                  <form onSubmit={handleChangeAdminPassword} className="flex flex-col md:flex-row gap-4">
+                    <div className="flex-1">
+                      <label className="block text-sm font-bold text-gray-600 mb-1">修改管理員密碼</label>
+                      <input type="text" name="newPassword" required placeholder="輸入新密碼" className="w-full border border-gray-300 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none" />
+                    </div>
+                    <div className="flex items-end">
+                      <button type="submit" className="w-full md:w-auto bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 px-6 rounded-xl transition-colors shadow-md">更新密碼</button>
+                    </div>
+                  </form>
+                </div>
               </div>
             )}
 
