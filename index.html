@@ -36,8 +36,8 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    // 新增 ArrowUp 與 ArrowDown 圖示用於排序
-    import { Settings, Users, Edit, Trash2, Plus, ArrowLeft, Check, X, LogIn, Lock, FileText, AlertCircle, Clock, Info, ArrowUp, ArrowDown } from 'lucide-react';
+    // 新增所需的圖示 (Eye, Download, List)
+    import { Settings, Users, Edit, Trash2, Plus, ArrowLeft, Check, X, LogIn, Lock, FileText, AlertCircle, Clock, Info, ArrowUp, ArrowDown, Eye, Download, List } from 'lucide-react';
     
     // Firebase 官方靜態 CDN
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
@@ -47,7 +47,7 @@
     // ==========================================
     // ⚠️ 請在這裡替換成您專屬的 Firebase 設定！ ⚠️
     // ==========================================
-   // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+ // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyD7CkhiUFfv44GB_4K3_CtGhedlr7ZfE7I",
   authDomain: "post-d1a06.firebaseapp.com",
@@ -73,21 +73,33 @@ const firebaseConfig = {
     
     const sysAppId = 'my-custom-form-system';
 
+    // 遮罩文字函式 (保留首尾，中間變 O)
+    const maskText = (text) => {
+      if (!text || typeof text !== 'string') return '';
+      const len = text.length;
+      if (len <= 1) return text;
+      if (len === 2) return text[0] + 'O';
+      return text[0] + 'O'.repeat(len - 2) + text[len - 1];
+    };
+
     function App() {
       // --- 狀態管理 ---
-      const [currentView, setCurrentView] = useState('user_home');
+      const [currentView, setCurrentView] = useState('user_home'); // 包含 'user_submissions', 'admin_submissions'
       const [toast, setToast] = useState(null);
       const [user, setUser] = useState(null);
       const [successModal, setSuccessModal] = useState(null);
       const [confirmModal, setConfirmModal] = useState(null);
+      const [passwordPromptModal, setPasswordPromptModal] = useState(null); // 輸入密碼的 Modal
 
       const [adminPassword, setAdminPassword] = useState('admin888');
       const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
       const [forms, setForms] = useState([]);
       const [editingForm, setEditingForm] = useState(null);
       
-      const [selectedForm, setSelectedForm] = useState(null);
+      const [selectedForm, setSelectedForm] = useState(null); // 前台選取的表單
+      const [viewingFormId, setViewingFormId] = useState(null); // 後台選取檢視名單的表單 ID
       const [registrations, setRegistrations] = useState([]);
+      const [editingRegistration, setEditingRegistration] = useState(null); // 正在編修的報名資料
 
       const showToast = (message, type = 'info') => {
         setToast({ message, type });
@@ -100,7 +112,7 @@ const firebaseConfig = {
       useEffect(() => {
         if (!isFirebaseConfigured || !auth || !db) return;
         const initAuth = async () => {
-          try { await signInAnonymously(auth); } catch (e) { console.error("匿名登入失敗，請確認 Authentication 是否已啟用", e); }
+          try { await signInAnonymously(auth); } catch (e) { console.error("登入失敗", e); }
         };
         initAuth();
         const unsubscribe = onAuthStateChanged(auth, setUser);
@@ -112,12 +124,12 @@ const firebaseConfig = {
         const formsRef = collection(db, 'artifacts', sysAppId, 'public', 'data', 'forms');
         const unsubForms = onSnapshot(formsRef, (snapshot) => {
           setForms(snapshot.docs.map(doc => doc.data()));
-        }, (err) => console.error("讀取表單失敗", err));
+        }, (err) => console.error(err));
         
         const regsRef = collection(db, 'artifacts', sysAppId, 'public', 'data', 'registrations');
         const unsubRegs = onSnapshot(regsRef, (snapshot) => {
           setRegistrations(snapshot.docs.map(doc => doc.data()));
-        }, (err) => console.error("讀取報名資料失敗", err));
+        }, (err) => console.error(err));
         
         return () => { unsubForms(); unsubRegs(); };
       }, [user]);
@@ -135,10 +147,7 @@ const firebaseConfig = {
       const handleChangeAdminPassword = (e) => {
         e.preventDefault();
         const newPwd = e.target.newPassword.value;
-        if (newPwd.trim().length < 4) {
-          showToast('密碼長度至少需 4 個字元', 'error');
-          return;
-        }
+        if (newPwd.trim().length < 4) return showToast('密碼至少需 4 個字元', 'error');
         setAdminPassword(newPwd);
         showToast('管理員密碼修改成功！', 'success');
         e.target.reset();
@@ -156,11 +165,7 @@ const firebaseConfig = {
           }
           showToast('表單已儲存！', 'success');
           navigateTo('admin_dashboard');
-        } catch (err) { 
-          // 強化錯誤日誌與提示
-          console.error("儲存表單錯誤:", err);
-          showToast('儲存失敗：請檢查 Firebase 資料庫權限設定是否開啟', 'error'); 
-        }
+        } catch (err) { showToast('儲存失敗：請檢查 Firebase 權限設定', 'error'); }
       };
 
       const handleDeleteForm = (formId) => {
@@ -183,6 +188,40 @@ const firebaseConfig = {
         });
       };
 
+      // 匯出 CSV 邏輯
+      const handleExportCSV = (form) => {
+        const formRegs = registrations.filter(r => r.formId === form.id);
+        if (formRegs.length === 0) return showToast('目前尚無報名資料', 'error');
+
+        let csvContent = "";
+        // 標題列
+        const headers = ['報名時間', ...form.questions.map(q => q.text)];
+        csvContent += headers.join(',') + '\r\n';
+        
+        // 資料列
+        formRegs.forEach(reg => {
+          const row = [new Date(reg.submittedAt).toLocaleString('zh-TW')];
+          form.questions.forEach(q => {
+             let val = reg.answers[q.id] || '';
+             if (Array.isArray(val)) val = val.join('、');
+             // 處理字串內的逗號與雙引號
+             val = `"${val.toString().replace(/"/g, '""')}"`;
+             row.push(val);
+          });
+          csvContent += row.join(',') + '\r\n';
+        });
+
+        // 加上 BOM 確保 Excel 中文不亂碼
+        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `${form.title}_報名名單.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
       // --- 題目選項編輯與排序邏輯 ---
       const updateQuestionType = (qId, newType) => {
         setEditingForm({
@@ -195,13 +234,16 @@ const firebaseConfig = {
       };
 
       const deleteQuestion = (qId) => {
-        setEditingForm({
-          ...editingForm,
-          questions: editingForm.questions.filter(q => q.id !== qId)
+        setEditingForm(prev => {
+          const isUnique = prev.uniqueKeyQuestionId === qId;
+          return {
+            ...prev,
+            uniqueKeyQuestionId: isUnique ? null : prev.uniqueKeyQuestionId, // 若刪除了唯一鍵，則清空設定
+            questions: prev.questions.filter(q => q.id !== qId)
+          };
         });
       };
 
-      // 向上或向下移動題目
       const moveQuestion = (index, direction) => {
         const newQs = [...editingForm.questions];
         if (direction === 'up' && index > 0) {
@@ -213,31 +255,20 @@ const firebaseConfig = {
       };
 
       const addOption = (qId) => {
-        setEditingForm({
-          ...editingForm,
-          questions: editingForm.questions.map(q => q.id === qId ? { ...q, options: [...q.options, `選項${q.options.length + 1}`] } : q)
-        });
+        setEditingForm({...editingForm, questions: editingForm.questions.map(q => q.id === qId ? { ...q, options: [...q.options, `選項${q.options.length + 1}`] } : q)});
       };
 
       const removeOption = (qId, optIdx) => {
-        setEditingForm({
-          ...editingForm,
-          questions: editingForm.questions.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== optIdx) } : q)
-        });
+        setEditingForm({...editingForm, questions: editingForm.questions.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== optIdx) } : q)});
       };
 
       const updateOptionText = (qId, optIdx, val) => {
-        setEditingForm({
-          ...editingForm,
-          questions: editingForm.questions.map(q => {
+        setEditingForm({...editingForm, questions: editingForm.questions.map(q => {
             if (q.id === qId) {
-              const newOpts = [...q.options];
-              newOpts[optIdx] = val;
-              return { ...q, options: newOpts };
+              const newOpts = [...q.options]; newOpts[optIdx] = val; return { ...q, options: newOpts };
             }
             return q;
-          })
-        });
+        })});
       };
 
       // --- 使用者邏輯 ---
@@ -250,7 +281,7 @@ const firebaseConfig = {
         return { status: 'open', text: '開放報名中', canApply: true };
       };
 
-      const handleSubmitRegistration = (e) => {
+      const handleSubmitRegistration = (e, isEdit = false) => {
         e.preventDefault();
         const formData = new FormData(e.target);
         const answers = {}; let hasError = false;
@@ -262,21 +293,69 @@ const firebaseConfig = {
           }
         });
 
-        const editPwd = formData.get('editPassword');
-        if (!editPwd || editPwd.trim().length < 4) return showToast('密碼至少4碼', 'error');
+        // 編輯模式不需要再次設定密碼，只需驗證欄位
+        let editPwd = isEdit ? editingRegistration.editPassword : formData.get('editPassword');
+        if (!isEdit && (!editPwd || editPwd.trim().length < 4)) return showToast('密碼至少4碼', 'error');
         if (hasError) return showToast('請填寫所有題目', 'error');
 
-        const newRegId = generateId().toUpperCase();
-        const newReg = { id: newRegId, formId: selectedForm.id, answers, editPassword: editPwd, submittedAt: new Date().toISOString() };
+        // 檢查唯一鍵是否重複 (防呆機制)
+        if (selectedForm.uniqueKeyQuestionId) {
+           const uniqueVal = answers[selectedForm.uniqueKeyQuestionId];
+           const isDuplicate = registrations.some(r => 
+              r.formId === selectedForm.id && 
+              r.answers[selectedForm.uniqueKeyQuestionId] === uniqueVal &&
+              (!isEdit || r.id !== editingRegistration.id) // 編輯模式時排除自己
+           );
+           if (isDuplicate) return showToast('此資料(唯一鍵)已報名過，不可重複報名', 'error');
+        }
+
+        const regId = isEdit ? editingRegistration.id : generateId().toUpperCase();
+        const newReg = { 
+          id: regId, 
+          formId: selectedForm.id, 
+          answers, 
+          editPassword: editPwd, 
+          submittedAt: isEdit ? editingRegistration.submittedAt : new Date().toISOString() 
+        };
 
         if(db && isFirebaseConfigured) {
-            setDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'registrations', newRegId), newReg)
-              .then(() => setSuccessModal({ title: '報名成功！', message: '請妥善保存下方序號與自訂密碼。', regId: newRegId }))
-              .catch(() => showToast('報名失敗，請稍後再試', 'error'));
+            setDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'registrations', regId), newReg)
+              .then(() => {
+                if (isEdit) {
+                  showToast('資料修改成功！', 'success');
+                  navigateTo('user_submissions');
+                } else {
+                  setSuccessModal({ title: '報名成功！', message: '請妥善保存您自訂的編修密碼，日後如需修改將需要使用它。' });
+                }
+              })
+              .catch(() => showToast('作業失敗，請稍後再試', 'error'));
         } else {
-            setRegistrations([...registrations, newReg]);
-            setSuccessModal({ title: '報名成功！', message: '請妥善保存下方序號與自訂密碼。(目前為預覽模式，重整後會消失)', regId: newRegId });
+            if (isEdit) {
+              setRegistrations(registrations.map(r => r.id === regId ? newReg : r));
+              showToast('資料修改成功！', 'success');
+              navigateTo('user_submissions');
+            } else {
+              setRegistrations([...registrations, newReg]);
+              setSuccessModal({ title: '報名成功！', message: '請妥善保存您自訂的編修密碼。(預覽模式重整後消失)' });
+            }
         }
+      };
+
+      const handleDeleteRegistration = () => {
+        setConfirmModal({
+          title: '刪除報名資料',
+          message: '確定要取消報名並刪除資料嗎？此動作無法復原。',
+          onConfirm: async () => {
+            if(db && isFirebaseConfigured) {
+              await deleteDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'registrations', editingRegistration.id));
+            } else {
+              setRegistrations(registrations.filter(r => r.id !== editingRegistration.id));
+            }
+            showToast('已取消報名', 'success');
+            setConfirmModal(null);
+            navigateTo('user_submissions');
+          }
+        });
       };
 
       // UI 渲染
@@ -284,7 +363,7 @@ const firebaseConfig = {
         <div>
           {!isFirebaseConfigured && (
             <div className="bg-red-600 text-white p-3 text-center font-bold text-sm">
-              ⚠️ 系統目前為「單機預覽模式」：您尚未設定 Firebase 金鑰，報名資料無法永久儲存！請依照教學替換 index.html 中的 firebaseConfig。
+              ⚠️ 系統目前為「單機預覽模式」：您尚未設定 Firebase 金鑰，報名資料無法永久儲存！
             </div>
           )}
 
@@ -307,20 +386,18 @@ const firebaseConfig = {
 
           {successModal && (
              <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-               <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-xl border-t-8 border-blue-500">
-                 <h3 className="text-2xl font-bold mb-4">{successModal.title}</h3>
-                 <p className="text-gray-600 mb-6">{successModal.message}</p>
-                 <div className="bg-blue-50 p-4 rounded-xl mb-6 border border-blue-100">
-                   <p className="text-3xl font-mono text-blue-600 font-bold select-all">{successModal.regId}</p>
-                 </div>
-                 <button onClick={() => { setSuccessModal(null); navigateTo('user_home'); }} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold transition-colors">確認並返回</button>
+               <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-xl border-t-8 border-blue-500 animate-fade-in">
+                 <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex justify-center items-center mx-auto mb-4"><Check size={32}/></div>
+                 <h3 className="text-2xl font-bold mb-4 text-gray-800">{successModal.title}</h3>
+                 <p className="text-gray-600 mb-8 leading-relaxed">{successModal.message}</p>
+                 <button onClick={() => { setSuccessModal(null); navigateTo('user_home'); }} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold transition-colors">確認並返回首頁</button>
                </div>
              </div>
           )}
 
           {confirmModal && (
              <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-               <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-xl border-t-8 border-red-500">
+               <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-xl border-t-8 border-red-500 animate-fade-in">
                  <h3 className="text-xl font-bold text-red-600 mb-4">{confirmModal.title}</h3>
                  <p className="mb-6">{confirmModal.message}</p>
                  <div className="flex gap-4">
@@ -331,7 +408,32 @@ const firebaseConfig = {
              </div>
           )}
 
+          {/* 編修密碼輸入 Modal */}
+          {passwordPromptModal && (
+             <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+               <form onSubmit={(e) => {
+                 e.preventDefault();
+                 if (e.target.pwd.value === passwordPromptModal.reg.editPassword) {
+                   setEditingRegistration(passwordPromptModal.reg);
+                   setPasswordPromptModal(null);
+                   navigateTo('user_edit_form');
+                 } else {
+                   showToast('編修密碼錯誤', 'error');
+                 }
+               }} className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl border-t-8 border-gray-800 animate-fade-in">
+                 <h3 className="text-xl font-bold text-gray-800 mb-2">驗證身份</h3>
+                 <p className="text-sm text-gray-500 mb-6">請輸入您報名時設定的「編修密碼」以進入修改或刪除模式。</p>
+                 <input type="password" name="pwd" required placeholder="請輸入密碼" className="w-full border border-gray-300 p-3 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 focus:outline-none"/>
+                 <div className="flex gap-4">
+                   <button type="button" onClick={() => setPasswordPromptModal(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 py-3 rounded-xl font-bold transition-colors text-gray-700">取消</button>
+                   <button type="submit" className="flex-1 bg-gray-800 hover:bg-gray-900 text-white py-3 rounded-xl font-bold transition-colors">確認送出</button>
+                 </div>
+               </form>
+             </div>
+          )}
+
           <main className="max-w-4xl mx-auto mt-8 px-4 animate-fade-in">
+            {/* 前台：首頁 */}
             {currentView === 'user_home' && (
               <div className="space-y-6">
                 <div className="bg-blue-600 rounded-3xl p-8 md:p-12 text-white shadow-lg flex flex-col md:flex-row justify-between items-center gap-6">
@@ -350,9 +452,17 @@ const firebaseConfig = {
                     const status = checkFormStatus(form);
                     return (
                       <div key={form.id} className="bg-white p-6 rounded-2xl shadow-sm border mb-4">
-                        <h3 className="text-xl font-bold flex items-center">{form.title} <span className={`text-sm px-3 py-1 rounded-full ml-3 ${status.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{status.text}</span></h3>
-                        <p className="text-sm text-gray-500 mt-2">時間：{form.startTime.replace('T', ' ')} ~ {form.endTime.replace('T', ' ')}</p>
-                        <button onClick={() => { setSelectedForm(form); navigateTo('user_form'); }} disabled={!status.canApply} className={`mt-4 w-full py-3 rounded-xl font-bold transition-colors ${status.canApply ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}>前往報名</button>
+                        <div className="flex justify-between items-start">
+                          <h3 className="text-xl font-bold flex flex-wrap items-center gap-2">
+                            {form.title} 
+                            <span className={`text-sm px-3 py-1 rounded-full ${status.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{status.text}</span>
+                          </h3>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-3 flex items-center"><Clock size={16} className="mr-1"/> {form.startTime.replace('T', ' ')} ~ {form.endTime.replace('T', ' ')}</p>
+                        <div className="mt-5 flex flex-col sm:flex-row gap-3">
+                          <button onClick={() => { setSelectedForm(form); navigateTo('user_submissions'); }} className="flex-1 py-3 rounded-xl font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors flex justify-center items-center"><Eye size={18} className="mr-2"/> 查看報名狀況</button>
+                          <button onClick={() => { setSelectedForm(form); navigateTo('user_form'); }} disabled={!status.canApply} className={`flex-1 py-3 rounded-xl font-bold transition-colors shadow-md ${status.canApply ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}>前往報名</button>
+                        </div>
                       </div>
                     )
                   })
@@ -360,11 +470,61 @@ const firebaseConfig = {
               </div>
             )}
 
+            {/* 前台：查看名單與編修入口 */}
+            {currentView === 'user_submissions' && selectedForm && (() => {
+               const formRegs = registrations.filter(r => r.formId === selectedForm.id);
+               // 尋找要顯示的代表欄位 (如果有設唯一鍵就用唯一鍵，否則用第一題)
+               const displayQId = selectedForm.uniqueKeyQuestionId || (selectedForm.questions.length > 0 ? selectedForm.questions[0].id : null);
+               const displayQText = displayQId ? selectedForm.questions.find(q => q.id === displayQId)?.text : '報名資料';
+
+               return (
+                 <div className="bg-white p-6 md:p-8 rounded-2xl shadow-md border border-gray-100">
+                   <button onClick={() => navigateTo('user_home')} className="mb-6 text-gray-500 hover:text-gray-800 flex items-center space-x-2 font-medium"><ArrowLeft size={18}/> <span>返回活動列表</span></button>
+                   <h2 className="text-2xl font-bold mb-2 text-gray-800">{selectedForm.title} - 報名狀況</h2>
+                   <p className="text-gray-500 mb-6 border-b pb-4">目前已有 {formRegs.length} 人報名 (上限 {selectedForm.maxParticipants} 人)。如欲修改您的資料，請點擊右側的「編輯」。</p>
+                   
+                   <div className="overflow-x-auto">
+                     <table className="w-full text-left text-sm text-gray-600">
+                       <thead className="bg-gray-50 border-b border-gray-200">
+                         <tr>
+                           <th className="px-4 py-3 font-bold text-gray-700">報名時間</th>
+                           <th className="px-4 py-3 font-bold text-gray-700">{displayQText} (部分隱藏)</th>
+                           <th className="px-4 py-3 font-bold text-gray-700 text-right">操作</th>
+                         </tr>
+                       </thead>
+                       <tbody className="divide-y divide-gray-100">
+                         {formRegs.length === 0 ? (
+                           <tr><td colSpan="3" className="px-4 py-8 text-center text-gray-400">尚無報名資料</td></tr>
+                         ) : (
+                           formRegs.map(reg => {
+                             let displayVal = reg.answers[displayQId] || '未填寫';
+                             if (Array.isArray(displayVal)) displayVal = displayVal.join(', ');
+                             return (
+                               <tr key={reg.id} className="hover:bg-gray-50 transition-colors">
+                                 <td className="px-4 py-4 whitespace-nowrap text-xs text-gray-500">{new Date(reg.submittedAt).toLocaleString('zh-TW')}</td>
+                                 <td className="px-4 py-4 font-medium text-gray-800">{maskText(displayVal)}</td>
+                                 <td className="px-4 py-4 text-right">
+                                   <button onClick={() => setPasswordPromptModal({ reg })} className="text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-bold flex items-center ml-auto transition-colors">
+                                     <Edit size={14} className="mr-1"/> 編輯
+                                   </button>
+                                 </td>
+                               </tr>
+                             );
+                           })
+                         )}
+                       </tbody>
+                     </table>
+                   </div>
+                 </div>
+               );
+            })()}
+
+            {/* 前台：填寫報名表 */}
             {currentView === 'user_form' && selectedForm && (
-              <div className="bg-white p-8 rounded-2xl shadow-md border border-gray-100">
+              <div className="bg-white p-6 md:p-8 rounded-2xl shadow-md border border-gray-100">
                 <button onClick={() => navigateTo('user_home')} className="mb-6 text-gray-500 hover:text-gray-800 flex items-center space-x-2 font-medium"><ArrowLeft size={18}/> <span>返回</span></button>
                 <h2 className="text-2xl font-bold mb-6 border-b pb-4 text-blue-800">{selectedForm.title} - 填寫報名</h2>
-                <form onSubmit={handleSubmitRegistration} className="space-y-6">
+                <form onSubmit={(e) => handleSubmitRegistration(e, false)} className="space-y-6">
                   {selectedForm.questions.map((q, idx) => (
                     <div key={q.id}>
                       <label className="block font-bold mb-2 text-gray-800">{idx + 1}. {q.text}</label>
@@ -388,6 +548,43 @@ const firebaseConfig = {
               </div>
             )}
 
+            {/* 前台：修改報名表 */}
+            {currentView === 'user_edit_form' && editingRegistration && selectedForm && (
+              <div className="bg-white p-6 md:p-8 rounded-2xl shadow-md border border-gray-100">
+                <button onClick={() => navigateTo('user_submissions')} className="mb-6 text-gray-500 hover:text-gray-800 flex items-center space-x-2 font-medium"><ArrowLeft size={18}/> <span>取消並返回名單</span></button>
+                <div className="bg-gray-800 text-white p-6 rounded-xl mb-6 flex justify-between items-center">
+                  <h2 className="text-xl font-bold">修改報名資料</h2>
+                  <span className="text-sm opacity-80">{selectedForm.title}</span>
+                </div>
+                <form onSubmit={(e) => handleSubmitRegistration(e, true)} className="space-y-6">
+                  {selectedForm.questions.map((q, idx) => {
+                    const prevAns = editingRegistration.answers[q.id];
+                    return (
+                      <div key={q.id}>
+                        <label className="block font-bold mb-2 text-gray-800">{idx + 1}. {q.text}</label>
+                        {q.type === 'short' && <input type="text" name={q.id} defaultValue={prevAns} required className="w-full border border-gray-300 p-3 rounded-xl focus:ring-2 focus:ring-gray-500 focus:outline-none bg-gray-50 focus:bg-white transition-all"/>}
+                        {q.type !== 'short' && q.options.map(opt => {
+                          const isChecked = Array.isArray(prevAns) ? prevAns.includes(opt) : prevAns === opt;
+                          return (
+                            <label key={opt} className="flex items-center mt-2 p-3 border border-gray-100 rounded-xl hover:bg-gray-50 cursor-pointer transition-colors bg-white">
+                              <input type={q.type === 'single' ? 'radio' : 'checkbox'} name={q.id} value={opt} defaultChecked={isChecked} className="w-5 h-5 mr-3 text-gray-800 border-gray-300 focus:ring-gray-500"/>
+                              <span className="font-medium text-gray-700">{opt}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                  <hr className="my-8"/>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <button type="submit" className="flex-1 bg-gray-800 hover:bg-gray-900 text-white font-bold py-4 rounded-xl shadow-md transition-colors text-lg">儲存修改資料</button>
+                    <button type="button" onClick={handleDeleteRegistration} className="sm:w-auto px-6 py-4 border-2 border-red-200 text-red-600 hover:bg-red-50 font-bold rounded-xl transition-colors flex justify-center items-center"><Trash2 size={20} className="mr-2"/> 取消並刪除報名</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* 後台：登入 */}
             {currentView === 'admin_login' && (
               <form onSubmit={handleAdminLogin} className="bg-white p-8 rounded-2xl shadow-md border max-w-sm mx-auto mt-20">
                 <div className="flex justify-center mb-4"><div className="bg-purple-100 p-4 rounded-full text-purple-600"><Lock size={32}/></div></div>
@@ -397,21 +594,24 @@ const firebaseConfig = {
               </form>
             )}
 
+            {/* 後台：儀表板 */}
             {currentView === 'admin_dashboard' && (
               <div className="space-y-6">
                 <div className="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl shadow-sm border">
                   <h2 className="text-2xl font-bold flex items-center text-gray-800"><Settings className="mr-2 text-purple-600"/> 表單管理</h2>
-                  <button onClick={() => { setEditingForm({id: generateId(), title: '', startTime: '', endTime: '', maxParticipants: 50, questions: []}); navigateTo('admin_form_editor'); }} className="mt-4 md:mt-0 bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center transition-colors shadow-md"><Plus size={18} className="mr-1"/> 新增表單</button>
+                  <button onClick={() => { setEditingForm({id: generateId(), title: '', startTime: '', endTime: '', maxParticipants: 50, uniqueKeyQuestionId: null, questions: []}); navigateTo('admin_form_editor'); }} className="mt-4 md:mt-0 bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center transition-colors shadow-md"><Plus size={18} className="mr-1"/> 新增表單</button>
                 </div>
                 {forms.map(form => (
-                  <div key={form.id} className="bg-white p-6 rounded-2xl shadow-sm border flex flex-col md:flex-row justify-between items-center gap-4 hover:shadow-md transition-shadow">
-                    <div>
+                  <div key={form.id} className="bg-white p-6 rounded-2xl shadow-sm border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 hover:shadow-md transition-shadow">
+                    <div className="flex-1 w-full">
                       <span className="font-bold text-xl text-gray-800 block mb-1">{form.title}</span>
-                      <span className="text-sm text-gray-500 flex items-center"><Clock size={14} className="mr-1"/> {form.startTime.replace('T', ' ')} ~ {form.endTime.replace('T', ' ')}</span>
+                      <span className="text-sm text-gray-500 flex items-center mb-3 lg:mb-0"><Clock size={14} className="mr-1"/> {form.startTime.replace('T', ' ')} ~ {form.endTime.replace('T', ' ')}</span>
                     </div>
-                    <div className="flex space-x-2 w-full md:w-auto mt-4 md:mt-0">
-                      <button onClick={() => { setEditingForm({...form}); navigateTo('admin_form_editor'); }} className="flex-1 md:flex-none text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><Edit size={16} className="mr-1"/> 編輯表單</button>
-                      <button onClick={() => handleDeleteForm(form.id)} className="flex-1 md:flex-none text-red-600 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><Trash2 size={16} className="mr-1"/> 刪除表單</button>
+                    <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                      <button onClick={() => { setViewingFormId(form.id); navigateTo('admin_submissions'); }} className="flex-1 lg:flex-none text-green-700 bg-green-50 hover:bg-green-100 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><List size={16} className="mr-1"/> 檢視名單</button>
+                      <button onClick={() => handleExportCSV(form)} className="flex-1 lg:flex-none text-gray-700 bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><Download size={16} className="mr-1"/> 匯出 CSV</button>
+                      <button onClick={() => { setEditingForm({...form}); navigateTo('admin_form_editor'); }} className="flex-1 lg:flex-none text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><Edit size={16} className="mr-1"/> 編輯</button>
+                      <button onClick={() => handleDeleteForm(form.id)} className="flex-1 lg:flex-none text-red-600 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-xl font-bold flex items-center justify-center transition-colors"><Trash2 size={16} className="mr-1"/> 刪除</button>
                     </div>
                   </div>
                 ))}
@@ -431,8 +631,53 @@ const firebaseConfig = {
               </div>
             )}
 
+            {/* 後台：檢視所有名單 */}
+            {currentView === 'admin_submissions' && (() => {
+               const vForm = forms.find(f => f.id === viewingFormId);
+               if (!vForm) return null;
+               const vRegs = registrations.filter(r => r.formId === vForm.id);
+
+               return (
+                 <div className="bg-white p-6 rounded-2xl shadow-sm border">
+                   <div className="flex justify-between items-center mb-6">
+                     <button onClick={() => navigateTo('admin_dashboard')} className="text-gray-500 hover:text-gray-800 flex items-center space-x-2 font-medium"><ArrowLeft size={18}/> <span>返回</span></button>
+                     <button onClick={() => handleExportCSV(vForm)} className="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg font-bold flex items-center transition-colors"><Download size={16} className="mr-2"/> 匯出完整名單</button>
+                   </div>
+                   <h2 className="text-2xl font-bold mb-4 text-gray-800">{vForm.title} - 後台完整名單</h2>
+                   <p className="text-gray-500 mb-6">目前共 {vRegs.length} 人報名。</p>
+                   
+                   <div className="overflow-x-auto">
+                     <table className="w-full text-left text-sm text-gray-600 border border-gray-200 rounded-lg">
+                       <thead className="bg-gray-100 border-b border-gray-200">
+                         <tr>
+                           <th className="px-4 py-3 font-bold text-gray-700 whitespace-nowrap">報名時間</th>
+                           {vForm.questions.map(q => <th key={q.id} className="px-4 py-3 font-bold text-gray-700 whitespace-nowrap">{q.text}</th>)}
+                         </tr>
+                       </thead>
+                       <tbody className="divide-y divide-gray-100">
+                         {vRegs.length === 0 ? (
+                           <tr><td colSpan={vForm.questions.length + 1} className="px-4 py-8 text-center text-gray-400">尚無報名資料</td></tr>
+                         ) : (
+                           vRegs.map(reg => (
+                             <tr key={reg.id} className="hover:bg-gray-50">
+                               <td className="px-4 py-4 whitespace-nowrap text-xs text-gray-500">{new Date(reg.submittedAt).toLocaleString('zh-TW')}</td>
+                               {vForm.questions.map(q => {
+                                 let val = reg.answers[q.id] || '';
+                                 if (Array.isArray(val)) val = val.join(', ');
+                                 return <td key={q.id} className="px-4 py-4">{val}</td>;
+                               })}
+                             </tr>
+                           ))
+                         )}
+                       </tbody>
+                     </table>
+                   </div>
+                 </div>
+               );
+            })()}
+
+            {/* 後台：表單編輯器 */}
             {currentView === 'admin_form_editor' && (() => {
-              // 判斷此表單是否已經發布過 (存在於 forms 陣列中)
               const isPublished = forms.some(f => f.id === editingForm.id);
 
               return (
@@ -444,7 +689,7 @@ const firebaseConfig = {
                       <Info size={24} className="shrink-0 mt-0.5 text-blue-600" />
                       <div>
                         <h4 className="font-bold">ℹ️ 表單結構已鎖定保護</h4>
-                        <p className="text-sm mt-1">此表單已經發布（存檔）。為確保使用者報名資料的一致性，發布後無法「改變題型」、「新增或刪除題目」與「新增或刪除選項」，僅開放修改文字內容與時間設定。</p>
+                        <p className="text-sm mt-1">此表單已經發布。為確保使用者報名資料的一致性，發布後無法改變結構，僅開放修改文字內容與時間設定。</p>
                       </div>
                     </div>
                   )}
@@ -454,7 +699,7 @@ const firebaseConfig = {
                   <label className="block text-sm font-bold text-gray-600 mb-1">表單標題</label>
                   <input type="text" placeholder="例如：迎新活動報名" value={editingForm.title} onChange={e => setEditingForm({...editingForm, title: e.target.value})} className="w-full border border-gray-300 p-3 rounded-xl mb-6 text-lg font-bold focus:ring-2 focus:ring-purple-500 focus:outline-none" />
                   
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                     <div>
                       <label className="block text-sm font-bold text-gray-600 mb-1">開始時間</label>
                       <input type="datetime-local" value={editingForm.startTime} onChange={e => setEditingForm({...editingForm, startTime: e.target.value})} className="border border-gray-300 p-3 rounded-xl w-full focus:ring-2 focus:ring-purple-500 focus:outline-none"/>
@@ -467,6 +712,22 @@ const firebaseConfig = {
                       <label className="block text-sm font-bold text-gray-600 mb-1">人數上限</label>
                       <input type="number" min="1" value={editingForm.maxParticipants} onChange={e => setEditingForm({...editingForm, maxParticipants: parseInt(e.target.value) || 1})} className="border border-gray-300 p-3 rounded-xl w-full focus:ring-2 focus:ring-purple-500 focus:outline-none"/>
                     </div>
+                  </div>
+
+                  {/* 唯一鍵設定 */}
+                  <div className="bg-purple-50 p-4 rounded-xl mb-8 border border-purple-100 flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="flex-1">
+                      <label className="block text-sm font-bold text-purple-800 mb-1">設定防重複唯一鍵 (選填)</label>
+                      <p className="text-xs text-purple-600">若設定此項（例如身分證或姓名），同一數值將不允許重複報名。</p>
+                    </div>
+                    <select 
+                      value={editingForm.uniqueKeyQuestionId || ''} 
+                      onChange={(e) => setEditingForm({...editingForm, uniqueKeyQuestionId: e.target.value || null})}
+                      className="border border-purple-300 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 min-w-[200px]"
+                    >
+                      <option value="">無 (允許重複報名)</option>
+                      {editingForm.questions.map(q => <option key={q.id} value={q.id}>{q.text || '未命名題目'}</option>)}
+                    </select>
                   </div>
 
                   <h3 className="font-bold text-lg mb-4 text-gray-800 border-b pb-2">自訂題目</h3>
@@ -487,19 +748,12 @@ const firebaseConfig = {
                           </select>
                         </div>
                         
-                        {/* 排序與刪除按鈕區塊 */}
                         {!isPublished && (
                           <div className="flex items-center space-x-1">
-                            <button onClick={() => moveQuestion(idx, 'up')} disabled={idx === 0} className="text-gray-400 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-gray-400 p-2 rounded-full transition-colors" title="往上移">
-                              <ArrowUp size={18} />
-                            </button>
-                            <button onClick={() => moveQuestion(idx, 'down')} disabled={idx === editingForm.questions.length - 1} className="text-gray-400 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-gray-400 p-2 rounded-full transition-colors" title="往下移">
-                              <ArrowDown size={18} />
-                            </button>
+                            <button onClick={() => moveQuestion(idx, 'up')} disabled={idx === 0} className="text-gray-400 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-gray-400 p-2 rounded-full transition-colors" title="往上移"><ArrowUp size={18} /></button>
+                            <button onClick={() => moveQuestion(idx, 'down')} disabled={idx === editingForm.questions.length - 1} className="text-gray-400 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-gray-400 p-2 rounded-full transition-colors" title="往下移"><ArrowDown size={18} /></button>
                             <div className="w-px h-6 bg-gray-300 mx-1"></div>
-                            <button onClick={() => deleteQuestion(q.id)} className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-full transition-colors shadow-sm" title="刪除題目">
-                              <Trash2 size={16} />
-                            </button>
+                            <button onClick={() => deleteQuestion(q.id)} className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-full transition-colors shadow-sm" title="刪除題目"><Trash2 size={16} /></button>
                           </div>
                         )}
                       </div>
@@ -517,16 +771,12 @@ const firebaseConfig = {
                               <div className={`w-4 h-4 border-2 border-gray-400 ${q.type === 'single' ? 'rounded-full' : 'rounded-sm'}`}></div>
                               <input type="text" value={opt} onChange={(e) => updateOptionText(q.id, optIdx, e.target.value)} className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 focus:outline-none bg-white text-sm font-medium" placeholder={`選項 ${optIdx + 1}`} />
                               {!isPublished && q.options.length > 1 && (
-                                <button onClick={() => removeOption(q.id, optIdx)} className="text-gray-400 hover:text-red-500 p-1 transition-colors" title="移除選項">
-                                  <X size={18} />
-                                </button>
+                                <button onClick={() => removeOption(q.id, optIdx)} className="text-gray-400 hover:text-red-500 p-1 transition-colors" title="移除選項"><X size={18} /></button>
                               )}
                             </div>
                           ))}
                           {!isPublished && (
-                            <button onClick={() => addOption(q.id)} className="text-purple-600 hover:text-purple-800 text-sm font-bold flex items-center mt-2 px-2 py-1 transition-colors">
-                              <Plus size={16} className="mr-1" /> 新增一個選項
-                            </button>
+                            <button onClick={() => addOption(q.id)} className="text-purple-600 hover:text-purple-800 text-sm font-bold flex items-center mt-2 px-2 py-1 transition-colors"><Plus size={16} className="mr-1" /> 新增一個選項</button>
                           )}
                         </div>
                       )}
