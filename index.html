@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>萬用線上報名系統</title>
   
-  <!-- 載入 Tailwind CSS 樣式引擎 -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- 加入 Import Map，確保所有套件共用 React 核心 -->
   <script type="importmap">
     {
       "imports": {
@@ -19,7 +17,6 @@
     }
   </script>
 
-  <!-- 載入 Babel 即時編譯器 (讓瀏覽器看懂 React JSX) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
@@ -32,11 +29,9 @@
   
   <div id="root"></div>
 
-  <!-- 主程式邏輯區塊 -->
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    // 新增所需的圖示 (Eye, Download, List)
     import { Settings, Users, Edit, Trash2, Plus, ArrowLeft, Check, X, LogIn, Lock, FileText, AlertCircle, Clock, Info, ArrowUp, ArrowDown, Eye, Download, List } from 'lucide-react';
     
     // Firebase 官方靜態 CDN
@@ -47,7 +42,7 @@
     // ==========================================
     // ⚠️ 請在這裡替換成您專屬的 Firebase 設定！ ⚠️
     // ==========================================
- // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyD7CkhiUFfv44GB_4K3_CtGhedlr7ZfE7I",
   authDomain: "post-d1a06.firebaseapp.com",
@@ -57,7 +52,6 @@ const firebaseConfig = {
   appId: "1:806076052846:web:df9afefb7ee7efbef27d7f",
   measurementId: "G-H4XJ9F8Z15"
 };
-
     const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "請貼上您的_apiKey";
 
     let app, auth, db;
@@ -84,22 +78,23 @@ const firebaseConfig = {
 
     function App() {
       // --- 狀態管理 ---
-      const [currentView, setCurrentView] = useState('user_home'); // 包含 'user_submissions', 'admin_submissions'
+      const [currentView, setCurrentView] = useState('user_home'); 
       const [toast, setToast] = useState(null);
       const [user, setUser] = useState(null);
       const [successModal, setSuccessModal] = useState(null);
       const [confirmModal, setConfirmModal] = useState(null);
-      const [passwordPromptModal, setPasswordPromptModal] = useState(null); // 輸入密碼的 Modal
+      const [passwordPromptModal, setPasswordPromptModal] = useState(null); 
 
+      // 預設密碼為 admin888，但會被 Firebase 覆蓋
       const [adminPassword, setAdminPassword] = useState('admin888');
       const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
       const [forms, setForms] = useState([]);
       const [editingForm, setEditingForm] = useState(null);
       
-      const [selectedForm, setSelectedForm] = useState(null); // 前台選取的表單
-      const [viewingFormId, setViewingFormId] = useState(null); // 後台選取檢視名單的表單 ID
+      const [selectedForm, setSelectedForm] = useState(null); 
+      const [viewingFormId, setViewingFormId] = useState(null); 
       const [registrations, setRegistrations] = useState([]);
-      const [editingRegistration, setEditingRegistration] = useState(null); // 正在編修的報名資料
+      const [editingRegistration, setEditingRegistration] = useState(null); 
 
       const showToast = (message, type = 'info') => {
         setToast({ message, type });
@@ -121,17 +116,28 @@ const firebaseConfig = {
 
       useEffect(() => {
         if (!isFirebaseConfigured || !user || !db) return;
+        
+        // 監聽表單資料
         const formsRef = collection(db, 'artifacts', sysAppId, 'public', 'data', 'forms');
         const unsubForms = onSnapshot(formsRef, (snapshot) => {
           setForms(snapshot.docs.map(doc => doc.data()));
         }, (err) => console.error(err));
         
+        // 監聽報名資料
         const regsRef = collection(db, 'artifacts', sysAppId, 'public', 'data', 'registrations');
         const unsubRegs = onSnapshot(regsRef, (snapshot) => {
           setRegistrations(snapshot.docs.map(doc => doc.data()));
         }, (err) => console.error(err));
+
+        // 監聽管理員密碼設定
+        const settingsRef = doc(db, 'artifacts', sysAppId, 'public', 'data', 'settings', 'admin');
+        const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+          if (docSnap.exists() && docSnap.data().password) {
+            setAdminPassword(docSnap.data().password);
+          }
+        }, (err) => console.error("讀取密碼失敗", err));
         
-        return () => { unsubForms(); unsubRegs(); };
+        return () => { unsubForms(); unsubRegs(); unsubSettings(); };
       }, [user]);
 
       // --- 管理員邏輯 ---
@@ -144,13 +150,24 @@ const firebaseConfig = {
         }
       };
 
-      const handleChangeAdminPassword = (e) => {
+      // 改為非同步儲存，確實將密碼寫入雲端
+      const handleChangeAdminPassword = async (e) => {
         e.preventDefault();
         const newPwd = e.target.newPassword.value;
         if (newPwd.trim().length < 4) return showToast('密碼至少需 4 個字元', 'error');
-        setAdminPassword(newPwd);
-        showToast('管理員密碼修改成功！', 'success');
-        e.target.reset();
+        
+        try {
+          if (db && isFirebaseConfigured) {
+            await setDoc(doc(db, 'artifacts', sysAppId, 'public', 'data', 'settings', 'admin'), { password: newPwd });
+          } else {
+            setAdminPassword(newPwd); // 單機預覽模式用
+          }
+          showToast('管理員密碼修改成功！', 'success');
+          e.target.reset();
+        } catch (err) {
+          console.error(err);
+          showToast('密碼更新失敗，請檢查權限設定', 'error');
+        }
       };
 
       const handleSaveForm = async () => {
@@ -589,7 +606,8 @@ const firebaseConfig = {
               <form onSubmit={handleAdminLogin} className="bg-white p-8 rounded-2xl shadow-md border max-w-sm mx-auto mt-20">
                 <div className="flex justify-center mb-4"><div className="bg-purple-100 p-4 rounded-full text-purple-600"><Lock size={32}/></div></div>
                 <h2 className="text-xl font-bold text-center mb-6 text-gray-800">後台管理登入</h2>
-                <input type="password" name="password" placeholder="預設密碼 admin888" className="w-full border border-gray-300 p-3 rounded-xl mb-6 focus:ring-2 focus:ring-purple-500 focus:outline-none"/>
+                {/* 拔除 placeholder 提示字元 */}
+                <input type="password" name="password" className="w-full border border-gray-300 p-3 rounded-xl mb-6 focus:ring-2 focus:ring-purple-500 focus:outline-none"/>
                 <button className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl transition-colors shadow-md">登入</button>
               </form>
             )}
